@@ -252,13 +252,15 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
         Periksa hasil pembacaan di bawah. Perbaiki yang keliru, atur kolom <strong>Hubungan</strong>
         (kepala keluarga / istri / suami / anak), lalu klik <strong>Import ke pohon</strong>.
         Untuk keluarga poligami: tandai semua istri dengan "Istri" — pernikahan ke-1, ke-2, dst. dicatat otomatis.
+        Kolom <strong>Nama ayah/ibu</strong> ikut dimasukkan ke pohon: jika nama tersebut sudah ada
+        (di pohon atau di daftar ini), orangnya langsung direlasikan — tidak dibuat ganda.
       </p>
       <div class="review-table-wrap">
         <table class="review-table">
           <thead>
             <tr>
               <th>Nama lengkap</th><th>NIK</th><th>JK</th><th>Tempat lahir</th>
-              <th>Tgl lahir</th><th>Hubungan</th><th></th>
+              <th>Tgl lahir</th><th>Hubungan</th><th>Nama ayah</th><th>Nama ibu</th><th></th>
             </tr>
           </thead>
           <tbody id="review-rows"></tbody>

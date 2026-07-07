@@ -463,6 +463,27 @@
         if (this.opts.onSelect) this.opts.onSelect(pid);
       });
 
+      // tombol + di tepi kanan kartu: tambah keluarga langsung dari kanvas
+      if (this.opts.canEdit) {
+        const plus = el('g', { class: 'card-plus' });
+        plus.appendChild(el('circle', {
+          cx: CARD_W, cy: CARD_H / 2, r: 11,
+          fill: 'var(--accent)', stroke: 'var(--surface)', 'stroke-width': 2,
+        }));
+        const t = el('text', {
+          x: CARD_W, y: CARD_H / 2 + 4.5, 'text-anchor': 'middle',
+          'font-size': 14, 'font-weight': 700, fill: 'var(--accent-ink)',
+          'pointer-events': 'none',
+        });
+        t.textContent = '+';
+        plus.appendChild(t);
+        plus.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (this.opts.onPlus) this.opts.onPlus(pid, e.clientX, e.clientY);
+        });
+        g.appendChild(plus);
+      }
+
       this.root.appendChild(g);
     }
 

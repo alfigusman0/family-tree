@@ -1,24 +1,27 @@
 <?php
 /**
- * Import hasil pembacaan Kartu Keluarga (setelah direview pengguna di layar review).
+ * Import hasil pembacaan Kartu Keluarga (setelah direview pengguna).
  *
  * POST JSON:
  * {
  *   tree_id: 1,
  *   rows: [
- *     { full_name, nik, gender:'L'|'P', birth_place, birth_date:'YYYY-MM-DD'|null,
+ *     { full_name, nik, gender:'L'|'P', birth_place, birth_date:'YYYY-MM-DD'|'',
  *       relation: 'kepala'|'istri'|'suami'|'anak'|'lainnya',
- *       existing_id: null|int   // jika dipetakan ke person yang sudah ada di pohon
- *     }, ...
+ *       father_name: '', mother_name: '',   // dari kolom "Nama Orang Tua" KK
+ *       marriage_date: 'YYYY-MM-DD'|'' }, ...
  *   ]
  * }
  *
- * Logika relasi:
- *  - 'kepala'  → kepala keluarga (jangkar).
- *  - 'istri'   → dinikahkan dengan kepala (kepala harus L). Boleh lebih dari satu (poligami).
- *  - 'suami'   → dinikahkan dengan kepala (kepala harus P).
- *  - 'anak'    → father/mother diambil dari kepala + pasangan pertama yang cocok jenis kelaminnya.
- *                (bisa disesuaikan lagi lewat edit person setelah import)
+ * Logika:
+ *  - Anggota dicocokkan dengan yang sudah ada di pohon lewat NIK, atau
+ *    (bila NIK kosong) lewat nama persis — tidak dibuat ganda.
+ *  - Nama ayah/ibu dicocokkan dengan anggota yang sudah ada (atau sesama baris
+ *    import) lewat nama; bila belum ada, dibuat baru, lalu direlasikan sebagai
+ *    orang tua. Pasangan ayah+ibu otomatis tercatat menikah.
+ *  - 'istri'/'suami' dinikahkan dengan kepala keluarga (mendukung poligami,
+ *    urutan pernikahan otomatis; tanggal menikah dari KK ikut tercatat).
+ *  - 'anak' tanpa nama ayah/ibu di-fallback ke kepala + pasangan pertamanya.
  */
 require __DIR__ . '/../config.php';
 
@@ -41,51 +44,129 @@ if (count($rows) > 40) {
     json_error('Maksimal 40 baris per import.');
 }
 
+/** Normalisasi nama untuk pencocokan: huruf besar, spasi tunggal, tanpa titik/koma. */
+function norm_name(string $s): string
+{
+    $s = mb_strtoupper(trim($s));
+    $s = str_replace(['.', ','], ' ', $s);
+    return preg_replace('/\s+/', ' ', $s);
+}
+
+function valid_date(string $s): ?string
+{
+    $s = trim($s);
+    return preg_match('/^\d{4}-\d{2}-\d{2}$/', $s) ? $s : null;
+}
+
 $pdo = db();
 $pdo->beginTransaction();
 
+$stats = ['created' => 0, 'matched' => 0, 'parents_created' => 0, 'parents_matched' => 0];
+
 try {
-    $ids      = [];   // index baris → person_id
+    /* ---- indeks anggota yang sudah ada di pohon ---- */
+    $st = $pdo->prepare('SELECT id, full_name, gender, nik, father_id, mother_id FROM persons WHERE tree_id = ?');
+    $st->execute([$treeId]);
+    $byName = [];  // norm_name → [row, ...]
+    $byNik  = [];  // nik → row
+    foreach ($st->fetchAll() as $p) {
+        $byName[norm_name($p['full_name'])][] = $p;
+        if ($p['nik']) {
+            $byNik[$p['nik']] = $p;
+        }
+    }
+
+    $insertPerson = $pdo->prepare(
+        'INSERT INTO persons (tree_id, full_name, gender, nik, birth_place, birth_date, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?)'
+    );
+    $createPerson = function (string $name, string $gender, string $nik = '', string $birthPlace = '', ?string $birthDate = null)
+        use ($insertPerson, $pdo, $treeId, $uid, &$byName, &$byNik): array {
+        $insertPerson->execute([
+            $treeId, mb_substr($name, 0, 150), $gender,
+            $nik !== '' ? substr($nik, 0, 20) : null,
+            mb_substr($birthPlace, 0, 120) ?: null,
+            $birthDate, $uid,
+        ]);
+        $p = [
+            'id' => (int) $pdo->lastInsertId(), 'full_name' => $name, 'gender' => $gender,
+            'nik' => $nik ?: null, 'father_id' => null, 'mother_id' => null,
+        ];
+        $byName[norm_name($name)][] = $p;
+        if ($nik !== '') {
+            $byNik[$nik] = $p;
+        }
+        return $p;
+    };
+
+    /** Cari orang berdasarkan nama (opsional filter gender). */
+    $findByName = function (string $name, ?string $gender) use (&$byName): ?array {
+        $key = norm_name($name);
+        foreach ($byName[$key] ?? [] as $p) {
+            if ($gender === null || $p['gender'] === $gender) {
+                return $p;
+            }
+        }
+        return null;
+    };
+
+    /** Pastikan pernikahan husband+wife tercatat; kembalikan true bila baru dibuat. */
+    $ensureMarriage = function (int $husbandId, int $wifeId, ?string $date = null) use ($pdo, $treeId): bool {
+        $st = $pdo->prepare('SELECT id FROM marriages WHERE husband_id = ? AND wife_id = ?');
+        $st->execute([$husbandId, $wifeId]);
+        if ($st->fetch()) {
+            return false;
+        }
+        $st = $pdo->prepare('SELECT GREATEST(
+            (SELECT COUNT(*) FROM marriages WHERE husband_id = ?),
+            (SELECT COUNT(*) FROM marriages WHERE wife_id = ?)) AS n');
+        $st->execute([$husbandId, $wifeId]);
+        $order = (int) $st->fetchColumn() + 1;
+        $pdo->prepare('INSERT INTO marriages (tree_id, husband_id, wife_id, marriage_date, marriage_order) VALUES (?, ?, ?, ?, ?)')
+            ->execute([$treeId, $husbandId, $wifeId, $date, $order]);
+        return true;
+    };
+
+    /* ---- pass 1: buat / cocokkan anggota dari setiap baris ---- */
+    $persons   = [];   // index baris → person array
     $kepalaIdx = null;
-    $spouseIdx = [];  // index baris istri/suami
+    $spouseIdx = [];
     $childIdx  = [];
 
-    // 1. buat / petakan semua person
     foreach ($rows as $i => $r) {
-        $name = trim($r['full_name'] ?? '');
+        $name   = trim($r['full_name'] ?? '');
         $gender = ($r['gender'] ?? '') === 'P' ? 'P' : 'L';
-        $rel  = $r['relation'] ?? 'lainnya';
+        $nik    = preg_replace('/\D+/', '', $r['nik'] ?? '');
+        $rel    = $r['relation'] ?? 'lainnya';
 
         if ($name === '') {
             throw new RuntimeException('Baris ' . ($i + 1) . ': nama wajib diisi.');
         }
 
-        if (!empty($r['existing_id'])) {
-            $st = $pdo->prepare('SELECT id, gender FROM persons WHERE id = ? AND tree_id = ?');
-            $st->execute([(int) $r['existing_id'], $treeId]);
-            $ex = $st->fetch();
-            if (!$ex) {
-                throw new RuntimeException('Baris ' . ($i + 1) . ': person yang dipetakan tidak ditemukan.');
-            }
-            $ids[$i] = (int) $ex['id'];
+        $person = null;
+        if ($nik !== '' && isset($byNik[$nik])) {
+            $person = $byNik[$nik];               // cocok lewat NIK (paling kuat)
         } else {
-            $birth = trim($r['birth_date'] ?? '');
-            if ($birth !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $birth)) {
-                $birth = '';
-            }
-            $nik = preg_replace('/\D+/', '', $r['nik'] ?? '');
-            $st = $pdo->prepare(
-                'INSERT INTO persons (tree_id, full_name, gender, nik, birth_place, birth_date, created_by)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)'
-            );
-            $st->execute([
-                $treeId, mb_substr($name, 0, 150), $gender,
-                $nik !== '' ? substr($nik, 0, 20) : null,
-                mb_substr(trim($r['birth_place'] ?? ''), 0, 120) ?: null,
-                $birth ?: null, $uid,
-            ]);
-            $ids[$i] = (int) $pdo->lastInsertId();
+            $person = $findByName($name, $gender); // cocok lewat nama persis
         }
+
+        if ($person) {
+            $stats['matched']++;
+            // lengkapi data yang masih kosong pada anggota lama
+            $upd = [];
+            $par = [];
+            if ($nik !== '' && empty($person['nik'])) { $upd[] = 'nik = ?'; $par[] = substr($nik, 0, 20); }
+            if (valid_date($r['birth_date'] ?? '')) { $upd[] = 'birth_date = COALESCE(birth_date, ?)'; $par[] = valid_date($r['birth_date']); }
+            if (trim($r['birth_place'] ?? '') !== '') { $upd[] = 'birth_place = COALESCE(birth_place, ?)'; $par[] = mb_substr(trim($r['birth_place']), 0, 120); }
+            if ($upd) {
+                $par[] = $person['id'];
+                $pdo->prepare('UPDATE persons SET ' . implode(', ', $upd) . ' WHERE id = ?')->execute($par);
+            }
+        } else {
+            $person = $createPerson($name, $gender, $nik, trim($r['birth_place'] ?? ''), valid_date($r['birth_date'] ?? ''));
+            $stats['created']++;
+        }
+        $persons[$i] = $person;
 
         if ($rel === 'kepala' && $kepalaIdx === null) {
             $kepalaIdx = $i;
@@ -96,49 +177,78 @@ try {
         }
     }
 
-    // 2. pernikahan kepala keluarga dengan istri/suami
-    $marriedSpouses = []; // person_id pasangan kepala
-    if ($kepalaIdx !== null) {
-        $kepalaId = $ids[$kepalaIdx];
-        $st = $pdo->prepare('SELECT gender FROM persons WHERE id = ?');
-        $st->execute([$kepalaId]);
-        $kepalaGender = $st->fetchColumn();
-
-        $order = 0;
-        foreach ($spouseIdx as $i) {
-            $spouseId = $ids[$i];
-            $st = $pdo->prepare('SELECT gender FROM persons WHERE id = ?');
-            $st->execute([$spouseId]);
-            $spouseGender = $st->fetchColumn();
-            if ($spouseGender === $kepalaGender) {
-                continue; // data tidak konsisten — lewati, jangan gagalkan seluruh import
-            }
-            $husband = $kepalaGender === 'L' ? $kepalaId : $spouseId;
-            $wife    = $kepalaGender === 'L' ? $spouseId : $kepalaId;
-
-            $st = $pdo->prepare('SELECT id FROM marriages WHERE husband_id = ? AND wife_id = ?');
-            $st->execute([$husband, $wife]);
-            if (!$st->fetch()) {
-                $order++;
-                $pdo->prepare('INSERT INTO marriages (tree_id, husband_id, wife_id, marriage_order) VALUES (?, ?, ?, ?)')
-                    ->execute([$treeId, $husband, $wife, $order]);
-            }
-            $marriedSpouses[] = $spouseId;
+    /* ---- pass 2: nama ayah & ibu → cocokkan / buat, lalu relasikan ---- */
+    foreach ($rows as $i => $r) {
+        $fatherName = trim($r['father_name'] ?? '');
+        $motherName = trim($r['mother_name'] ?? '');
+        if ($fatherName === '-') $fatherName = '';
+        if ($motherName === '-') $motherName = '';
+        if ($fatherName === '' && $motherName === '') {
+            continue;
         }
 
-        // 3. anak-anak: ayah/ibu = kepala + pasangan pertama (dapat dikoreksi manual jika poligami)
+        $father = null;
+        $mother = null;
+        if ($fatherName !== '') {
+            $father = $findByName($fatherName, 'L');
+            if ($father) {
+                $stats['parents_matched']++;
+            } else {
+                $father = $createPerson($fatherName, 'L');
+                $stats['parents_created']++;
+            }
+        }
+        if ($motherName !== '') {
+            $mother = $findByName($motherName, 'P');
+            if ($mother) {
+                $stats['parents_matched']++;
+            } else {
+                $mother = $createPerson($motherName, 'P');
+                $stats['parents_created']++;
+            }
+        }
+
+        // relasikan sebagai orang tua (jangan menimpa relasi yang sudah ada)
+        $pdo->prepare('UPDATE persons SET father_id = COALESCE(father_id, ?), mother_id = COALESCE(mother_id, ?) WHERE id = ?')
+            ->execute([$father['id'] ?? null, $mother['id'] ?? null, $persons[$i]['id']]);
+
+        // ayah + ibu otomatis tercatat sebagai pasangan
+        if ($father && $mother) {
+            $ensureMarriage((int) $father['id'], (int) $mother['id']);
+        }
+    }
+
+    /* ---- pass 3: pernikahan kepala keluarga ↔ istri/suami ---- */
+    $marriedSpouses = [];
+    if ($kepalaIdx !== null) {
+        $kepala = $persons[$kepalaIdx];
+        foreach ($spouseIdx as $i) {
+            $spouse = $persons[$i];
+            if ($spouse['gender'] === $kepala['gender']) {
+                continue; // data tidak konsisten — lewati
+            }
+            $husband = $kepala['gender'] === 'L' ? $kepala : $spouse;
+            $wife    = $kepala['gender'] === 'L' ? $spouse : $kepala;
+            $ensureMarriage((int) $husband['id'], (int) $wife['id'], valid_date($rows[$i]['marriage_date'] ?? ''));
+            $marriedSpouses[] = $spouse;
+        }
+
+        /* ---- pass 4: fallback anak tanpa nama ayah/ibu ---- */
         $fatherId = null;
         $motherId = null;
-        if ($kepalaGender === 'L') {
-            $fatherId = $kepalaId;
-            $motherId = $marriedSpouses[0] ?? null;
+        if ($kepala['gender'] === 'L') {
+            $fatherId = (int) $kepala['id'];
+            $motherId = isset($marriedSpouses[0]) ? (int) $marriedSpouses[0]['id'] : null;
         } else {
-            $motherId = $kepalaId;
-            $fatherId = $marriedSpouses[0] ?? null;
+            $motherId = (int) $kepala['id'];
+            $fatherId = isset($marriedSpouses[0]) ? (int) $marriedSpouses[0]['id'] : null;
         }
         foreach ($childIdx as $i) {
+            if (trim($rows[$i]['father_name'] ?? '') !== '' || trim($rows[$i]['mother_name'] ?? '') !== '') {
+                continue; // sudah ditangani pass 2
+            }
             $pdo->prepare('UPDATE persons SET father_id = COALESCE(father_id, ?), mother_id = COALESCE(mother_id, ?) WHERE id = ?')
-                ->execute([$fatherId, $motherId, $ids[$i]]);
+                ->execute([$fatherId, $motherId, $persons[$i]['id']]);
         }
     }
 
@@ -151,5 +261,9 @@ try {
     throw $e;
 }
 
-log_activity($treeId, $uid, 'import_kk', 'Mengimpor ' . count($rows) . ' anggota dari Kartu Keluarga');
-json_out(['ok' => true, 'imported' => count($ids)]);
+log_activity($treeId, $uid, 'import_kk', sprintf(
+    'Import KK: %d baru, %d dicocokkan, %d orang tua baru, %d orang tua terhubung',
+    $stats['created'], $stats['matched'], $stats['parents_created'], $stats['parents_matched']
+));
+
+json_out(array_merge(['ok' => true], $stats));

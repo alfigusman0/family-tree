@@ -12,8 +12,10 @@
 
   const svg = document.getElementById('tree-svg');
   const renderer = new TreeRenderer(svg, {
+    canEdit: window.CAN_EDIT,
     onSelect(id) { selectPerson(id); },
-    onDeselect() { selectPerson(null); },
+    onDeselect() { selectPerson(null); hidePlusMenu(); },
+    onPlus(id, cx, cy) { selectPerson(id); showPlusMenu(id, cx, cy); },
   });
 
   const esc = s => String(s == null ? '' : s)
@@ -208,25 +210,10 @@
     }
 
     const on = (id, fn) => { const b = document.getElementById(id); if (b) b.addEventListener('click', fn); };
-    on('qa-spouse', () => openPersonForm({
-      mode: 'add',
-      relation: { type: 'spouse', person_id: Number(p.id) },
-      lockGender: p.gender === 'L' ? 'P' : 'L',
-      context: `Menambahkan pasangan untuk <strong>${esc(p.full_name)}</strong>. Jika sudah punya pasangan sebelumnya, ini otomatis tercatat sebagai pernikahan berikutnya (poligami/menikah lagi didukung).`,
-    }));
+    on('qa-spouse', () => addSpouse(p));
     on('qa-child', () => startAddChild(p));
-    on('qa-father', () => openPersonForm({
-      mode: 'add',
-      relation: { type: 'parent', child_id: Number(p.id), marry_other_parent: true },
-      lockGender: 'L',
-      context: `Menambahkan <strong>ayah</strong> dari ${esc(p.full_name)}.`,
-    }));
-    on('qa-mother', () => openPersonForm({
-      mode: 'add',
-      relation: { type: 'parent', child_id: Number(p.id), marry_other_parent: true },
-      lockGender: 'P',
-      context: `Menambahkan <strong>ibu</strong> dari ${esc(p.full_name)}.`,
-    }));
+    on('qa-father', () => addParent(p, 'L'));
+    on('qa-mother', () => addParent(p, 'P'));
     on('qa-edit', () => openPersonForm({ mode: 'edit', person: p }));
     on('qa-delete', async () => {
       if (!confirm(`Hapus ${p.full_name} dari pohon?\nRelasi pernikahan ikut terhapus; anak-anaknya tetap ada namun relasi orang tuanya dilepas.`)) return;
@@ -416,6 +403,71 @@
       renderer.select(state.selectedId);
     } catch (err) { alert(err.message); }
   });
+
+  /* ---------- aksi tambah keluarga (dipakai panel & menu + di kanvas) ---------- */
+
+  function addSpouse(p) {
+    openPersonForm({
+      mode: 'add',
+      relation: { type: 'spouse', person_id: Number(p.id) },
+      lockGender: p.gender === 'L' ? 'P' : 'L',
+      context: `Menambahkan pasangan untuk <strong>${esc(p.full_name)}</strong>. Jika sudah punya pasangan sebelumnya, ini otomatis tercatat sebagai pernikahan berikutnya (poligami/menikah lagi didukung).`,
+    });
+  }
+
+  function addParent(p, gender) {
+    openPersonForm({
+      mode: 'add',
+      relation: { type: 'parent', child_id: Number(p.id), marry_other_parent: true },
+      lockGender: gender,
+      context: `Menambahkan <strong>${gender === 'L' ? 'ayah' : 'ibu'}</strong> dari ${esc(p.full_name)}.`,
+    });
+  }
+
+  /* ---------- menu + pada kartu di kanvas ---------- */
+
+  const canvasWrap = document.getElementById('canvas-wrap');
+  const plusMenu = document.createElement('div');
+  plusMenu.className = 'plus-menu';
+  canvasWrap.appendChild(plusMenu);
+
+  function hidePlusMenu() { plusMenu.classList.remove('open'); }
+
+  function showPlusMenu(personId, clientX, clientY) {
+    const p = state.byId.get(Number(personId));
+    if (!p || !window.CAN_EDIT) return;
+
+    const actions = [
+      { label: '+ Pasangan', run: () => addSpouse(p) },
+      { label: '+ Anak', run: () => startAddChild(p) },
+    ];
+    if (!p.father_id) actions.push({ label: '+ Ayah', run: () => addParent(p, 'L') });
+    if (!p.mother_id) actions.push({ label: '+ Ibu', run: () => addParent(p, 'P') });
+    actions.push({ label: '✎ Edit data', run: () => openPersonForm({ mode: 'edit', person: p }) });
+
+    plusMenu.innerHTML = `<div class="pm-title">${esc(p.full_name)}</div>`;
+    actions.forEach(a => {
+      const b = document.createElement('button');
+      b.textContent = a.label;
+      b.addEventListener('click', () => { hidePlusMenu(); a.run(); });
+      plusMenu.appendChild(b);
+    });
+
+    // posisikan dekat tombol +, tetap di dalam area kanvas
+    const rect = canvasWrap.getBoundingClientRect();
+    plusMenu.classList.add('open');
+    let x = clientX - rect.left + 8;
+    let y = clientY - rect.top + 8;
+    x = Math.min(x, rect.width - plusMenu.offsetWidth - 10);
+    y = Math.min(y, rect.height - plusMenu.offsetHeight - 10);
+    plusMenu.style.left = Math.max(8, x) + 'px';
+    plusMenu.style.top = Math.max(8, y) + 'px';
+  }
+
+  // tutup menu saat kanvas digeser / di-zoom / klik area kosong
+  svg.addEventListener('pointerdown', hidePlusMenu);
+  svg.addEventListener('wheel', hidePlusMenu, { passive: true });
+  svg.addEventListener('touchstart', hidePlusMenu, { passive: true });
 
   /* ---------- tambah anak (pilih orang tua kedua) ---------- */
 

@@ -252,6 +252,27 @@ textarea { resize: vertical; min-height: 70px; }
 .node-card .name { font-size: 13px; font-weight: 600; fill: var(--ink); }
 .node-card .years { font-size: 11px; fill: var(--ink-3); }
 .node-card.deceased .name { fill: var(--ink-3); }
+.node-card .card-plus { opacity: 0; transition: opacity .12s; cursor: pointer; }
+.node-card:hover .card-plus, .node-card.selected .card-plus { opacity: 1; }
+@media (hover: none) { .node-card .card-plus { opacity: 1; } } /* layar sentuh: selalu tampak */
+.plus-menu {
+  position: absolute; z-index: 30; min-width: 180px;
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: var(--radius); box-shadow: var(--shadow-lg);
+  padding: 6px; display: none;
+}
+.plus-menu.open { display: block; }
+.plus-menu .pm-title {
+  font-size: 12px; font-weight: 700; color: var(--ink-3);
+  padding: 4px 10px 6px; border-bottom: 1px solid var(--border); margin-bottom: 4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px;
+}
+.plus-menu button {
+  display: flex; width: 100%; align-items: center; gap: 8px; text-align: left;
+  padding: 8px 10px; border: 0; background: none; font: inherit; font-size: 14px;
+  cursor: pointer; border-radius: 6px; color: var(--ink);
+}
+.plus-menu button:hover { background: var(--accent-soft); color: var(--accent); }
 .edge { stroke: var(--border-strong); stroke-width: 1.6; fill: none; }
 .edge-marriage { stroke: var(--ink-3); stroke-width: 2; }
 .edge-marriage.divorced { stroke-dasharray: 5 4; }
