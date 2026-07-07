@@ -1,0 +1,5 @@
+# Folder unggahan: jangan pernah mengeksekusi skrip di sini
+php_flag engine off
+<FilesMatch "\.(php|phtml|php\d|pl|py|cgi|sh)$">
+  Require all denied
+</FilesMatch>
