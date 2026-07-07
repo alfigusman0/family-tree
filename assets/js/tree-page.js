@@ -286,8 +286,10 @@
     }
     panelBody.innerHTML = html;
 
-    document.getElementById('mem-share').addEventListener('click', () =>
-      document.getElementById('modal-share').classList.add('open'));
+    document.getElementById('mem-share').addEventListener('click', () => {
+      document.getElementById('modal-share').classList.add('open');
+      if (typeof loadGuestLinks === 'function') loadGuestLinks();
+    });
 
     panelBody.querySelectorAll('[data-role-user]').forEach(sel =>
       sel.addEventListener('change', async () => {
@@ -674,6 +676,158 @@
       document.getElementById('code-view').textContent = r.share_code_view;
     } catch (err) { alert(err.message); }
   });
+
+  /* ---------- mode garis berwarna ---------- */
+
+  const btnColors = document.getElementById('btn-colors');
+  const syncColorBtn = () => {
+    btnColors.classList.toggle('btn-primary', renderer.colorMode);
+  };
+  btnColors.addEventListener('click', () => {
+    renderer.setColorMode(!renderer.colorMode);
+    syncColorBtn();
+  });
+  syncColorBtn();
+
+  /* ---------- ekspor SVG ---------- */
+
+  // nilai literal pengganti CSS variable agar berkas SVG berdiri sendiri
+  const SVG_VARS = {
+    '--surface': '#ffffff', '--surface-2': '#f1efea', '--border': '#e3e0d8',
+    '--border-strong': '#cfcabe', '--ink': '#1f1e1a', '--ink-2': '#5a574e',
+    '--ink-3': '#8a867a', '--accent': '#2f6b4f', '--accent-ink': '#ffffff',
+    '--male': '#3b5f7d', '--male-soft': '#e8eef3',
+    '--female': '#93536b', '--female-soft': '#f4eaef',
+  };
+  const SVG_STYLE = `<style>
+    text{font-family:'Segoe UI',system-ui,sans-serif}
+    .node-card rect.card-bg{fill:#ffffff;stroke:#cfcabe;stroke-width:1}
+    .node-card.male rect.card-bg{stroke:#b9c9d6}
+    .node-card.female rect.card-bg{stroke:#d8c0cc}
+    .node-card .name{font-size:13px;font-weight:600;fill:#1f1e1a}
+    .node-card .years{font-size:11px;fill:#8a867a}
+    .node-card.deceased .name{fill:#8a867a}
+    .edge{stroke:#cfcabe;stroke-width:1.6;fill:none}
+    .edge-marriage{stroke:#8a867a;stroke-width:2}
+    .edge-marriage.divorced{stroke-dasharray:5 4}
+    .marriage-label{font-size:10px;fill:#8a867a}
+  </style>`;
+
+  async function exportSvg() {
+    const rootG = svg.querySelector('g');
+    if (!rootG || !state.persons.length) { alert('Pohon masih kosong.'); return; }
+    const btn = document.getElementById('btn-export-svg');
+    btn.disabled = true;
+    try {
+      const clone = rootG.cloneNode(true);
+      clone.removeAttribute('transform');
+      // elemen interaktif tidak ikut diekspor
+      clone.querySelectorAll('.card-plus, .collapse-toggle').forEach(n => n.remove());
+      clone.querySelectorAll('.node-card.selected').forEach(n => n.classList.remove('selected'));
+      // foto → data URL agar tampil di luar aplikasi
+      for (const img of clone.querySelectorAll('image')) {
+        const href = img.getAttribute('href') || img.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
+        if (!href || href.startsWith('data:')) continue;
+        try {
+          const blob = await (await fetch(href)).blob();
+          const dataUrl = await new Promise(res => {
+            const fr = new FileReader();
+            fr.onload = () => res(fr.result);
+            fr.readAsDataURL(blob);
+          });
+          img.setAttribute('href', dataUrl);
+          img.setAttributeNS('http://www.w3.org/1999/xlink', 'href', dataUrl);
+        } catch (e) { /* foto dilewati bila gagal */ }
+      }
+      const bbox = rootG.getBBox();
+      const pad = 40;
+      let body = new XMLSerializer().serializeToString(clone);
+      for (const [v, val] of Object.entries(SVG_VARS)) {
+        body = body.split(`var(${v})`).join(val);
+      }
+      const w = Math.ceil(bbox.width + pad * 2);
+      const h = Math.ceil(bbox.height + pad * 2);
+      const svgStr = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" `
+        + `viewBox="${Math.floor(bbox.x - pad)} ${Math.floor(bbox.y - pad)} ${w} ${h}" width="${w}" height="${h}">`
+        + `<rect x="${Math.floor(bbox.x - pad)}" y="${Math.floor(bbox.y - pad)}" width="${w}" height="${h}" fill="#f7f6f3"/>`
+        + SVG_STYLE + body + '</svg>';
+      const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      const slug = (window.TREE_NAME || 'pohon').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      a.download = 'silsilah-' + (slug || 'pohon') + '.svg';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+  document.getElementById('btn-export-svg').addEventListener('click', exportSvg);
+
+  /* ---------- tautan tamu (tanpa login) ---------- */
+
+  const guestWrap = document.getElementById('guest-links');
+
+  async function loadGuestLinks() {
+    if (!guestWrap) return;
+    try {
+      const r = await api.get('api/trees.php?action=guest_links&tree_id=' + window.TREE_ID);
+      if (!r.links.length) {
+        guestWrap.innerHTML = '<p style="font-size:13px;color:var(--ink-3)">Belum ada tautan tamu aktif.</p>';
+        return;
+      }
+      guestWrap.innerHTML = r.links.map(l => `
+        <div class="share-box" style="margin-bottom:8px">
+          <div class="row">
+            <div style="min-width:0">
+              <div style="font-size:12.5px;color:var(--ink-3)">berlaku s.d. ${esc(l.expires_at)}${l.created_by_name ? ' · oleh ' + esc(l.created_by_name) : ''}</div>
+            </div>
+            <div style="display:flex;gap:6px;flex:none">
+              <button class="btn btn-sm" data-copy-guest="${esc(l.token)}">Salin tautan</button>
+              <button class="btn btn-ghost btn-sm" data-del-guest="${l.id}" title="Hapus">&times;</button>
+            </div>
+          </div>
+        </div>`).join('');
+      guestWrap.querySelectorAll('[data-copy-guest]').forEach(b =>
+        b.addEventListener('click', async () => {
+          const url = location.origin + location.pathname.replace(/tree\.php$/, 'view.php') + '?t=' + b.dataset.copyGuest;
+          try {
+            await navigator.clipboard.writeText(url);
+            b.textContent = 'Tersalin ✓';
+          } catch (e) {
+            prompt('Salin tautan ini:', url);
+          }
+          setTimeout(() => { b.textContent = 'Salin tautan'; }, 1600);
+        }));
+      guestWrap.querySelectorAll('[data-del-guest]').forEach(b =>
+        b.addEventListener('click', async () => {
+          if (!confirm('Hapus tautan tamu ini? Orang yang memegang tautan tidak bisa membuka lagi.')) return;
+          try {
+            await api.post('api/trees.php', { action: 'delete_guest_link', tree_id: window.TREE_ID, link_id: Number(b.dataset.delGuest) });
+            loadGuestLinks();
+          } catch (err) { alert(err.message); }
+        }));
+    } catch (err) {
+      guestWrap.innerHTML = `<div class="alert alert-error">${esc(err.message)}</div>`;
+    }
+  }
+
+  const guestCreate = document.getElementById('guest-create');
+  if (guestCreate) {
+    guestCreate.addEventListener('click', async () => {
+      try {
+        await api.post('api/trees.php', {
+          action: 'create_guest_link',
+          tree_id: window.TREE_ID,
+          days: Number(document.getElementById('guest-days').value) || 7,
+        });
+        loadGuestLinks();
+      } catch (err) { alert(err.message); }
+    });
+    document.getElementById('btn-share').addEventListener('click', loadGuestLinks);
+  }
 
   document.getElementById('zoom-in').addEventListener('click', () => renderer.zoomBy(1.2));
   document.getElementById('zoom-out').addEventListener('click', () => renderer.zoomBy(0.83));

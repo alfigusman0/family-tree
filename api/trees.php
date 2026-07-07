@@ -33,6 +33,17 @@ if ($method === 'GET') {
         json_out(['ok' => true, 'members' => $st->fetchAll()]);
     }
 
+    if ($action === 'guest_links') {
+        db()->prepare('DELETE FROM share_links WHERE tree_id = ? AND expires_at < NOW()')->execute([$treeId]);
+        $st = db()->prepare(
+            'SELECT sl.id, sl.token, sl.expires_at, u.name AS created_by_name
+             FROM share_links sl LEFT JOIN users u ON u.id = sl.created_by
+             WHERE sl.tree_id = ? ORDER BY sl.id DESC'
+        );
+        $st->execute([$treeId]);
+        json_out(['ok' => true, 'links' => $st->fetchAll()]);
+    }
+
     if ($action === 'activity') {
         $st = db()->prepare(
             'SELECT a.action, a.detail, a.created_at, u.name AS user_name
@@ -103,6 +114,32 @@ if ($action === 'join') {
 /* aksi berikut membutuhkan keanggotaan pohon */
 $treeId = (int) ($in['tree_id'] ?? 0);
 $role   = require_tree_access($treeId, $uid);
+
+if ($action === 'create_guest_link') {
+    if ($role === 'viewer') {
+        json_error('Hanya pemilik/editor yang dapat membuat tautan tamu.', 403);
+    }
+    $days = (int) ($in['days'] ?? 7);
+    if (!in_array($days, [1, 3, 7, 30], true)) {
+        $days = 7;
+    }
+    $token = bin2hex(random_bytes(16));
+    db()->prepare('INSERT INTO share_links (tree_id, token, expires_at, created_by) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ? DAY), ?)')
+        ->execute([$treeId, $token, $days, $uid]);
+    log_activity($treeId, $uid, 'guest_link', 'Membuat tautan tamu (berlaku ' . $days . ' hari)');
+    $st = db()->prepare('SELECT expires_at FROM share_links WHERE token = ?');
+    $st->execute([$token]);
+    json_out(['ok' => true, 'token' => $token, 'expires_at' => $st->fetchColumn()]);
+}
+
+if ($action === 'delete_guest_link') {
+    if ($role === 'viewer') {
+        json_error('Hanya pemilik/editor yang dapat menghapus tautan tamu.', 403);
+    }
+    db()->prepare('DELETE FROM share_links WHERE id = ? AND tree_id = ?')
+        ->execute([(int) ($in['link_id'] ?? 0), $treeId]);
+    json_out(['ok' => true]);
+}
 
 if ($action === 'rename') {
     if ($role !== 'owner') {

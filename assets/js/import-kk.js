@@ -85,19 +85,35 @@
     try {
       let positioned; // [{items:[{x,str}]}] urut atas→bawah
       const name = file.name || '';
+      const isImage = /^image\//.test(file.type);
       if (/\.pdf$/i.test(name) || file.type === 'application/pdf') {
         positioned = await extractFromPdf(file);
-      } else if (/^image\//.test(file.type)) {
+      } else if (isImage) {
         setProgress('Membaca gambar dengan OCR (bisa 1–2 menit)…', 0);
-        positioned = await ocrImage(file);
+        positioned = await ocrImage(file, true);
       } else {
         alert('Format tidak didukung. Gunakan JPG, PNG, atau PDF.');
         return;
       }
       window.KKImport._lastLines = positioned; // untuk diagnosis hasil pembacaan
-      const rows = parseKK(positioned);
-      if (!rows.length) {
-        alert('Tidak ada data anggota keluarga yang terbaca. Anda tetap bisa mengisi tabel secara manual.');
+      let rows = parseKK(positioned);
+      const hasData = rs => rs.some(r => (r.full_name || '').length >= 3);
+
+      // foto dengan pencahayaan tidak merata kadang justru rusak oleh
+      // binarisasi — coba sekali lagi tanpa binarisasi sebelum menyerah
+      if (!hasData(rows) && isImage) {
+        setProgress('Hasil belum terbaca — mencoba mode pembacaan kedua…', 0.1);
+        positioned = await ocrImage(file, false);
+        window.KKImport._lastLines = positioned;
+        const rows2 = parseKK(positioned);
+        if (hasData(rows2) || rows2.length > rows.length) rows = rows2;
+      }
+
+      if (!hasData(rows)) {
+        alert('Data pada foto tidak dapat terbaca otomatis.\n\n' +
+          'Tips: gunakan PDF asli dari Disdukcapil (paling akurat), atau foto ulang ' +
+          'dengan lebih dekat, terang, dan lurus (teks tabel harus terbaca jelas oleh mata). ' +
+          'Anda juga tetap bisa mengisi tabel di layar berikut secara manual.');
       }
       showReview(rows);
     } catch (err) {
@@ -158,9 +174,9 @@
    * Pra-proses gambar agar OCR jauh lebih akurat: perbesar (min lebar 2200 px),
    * ubah ke skala abu-abu, lalu binarisasi dengan ambang Otsu.
    */
-  async function preprocessForOcr(fileOrBlob) {
+  async function preprocessForOcr(fileOrBlob, binarize) {
     const img = await createImageBitmap(fileOrBlob);
-    const scale = Math.max(1, 2200 / img.width);
+    const scale = Math.max(1, 2600 / img.width);
     const cv = document.createElement('canvas');
     cv.width = Math.round(img.width * scale);
     cv.height = Math.round(img.height * scale);
@@ -176,6 +192,16 @@
       const g = (px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114) | 0;
       px[i] = g;
       hist[g]++;
+    }
+    if (!binarize) {
+      // grayscale saja — untuk foto dengan pencahayaan tidak merata,
+      // thresholding diserahkan ke Tesseract (adaptif per area)
+      for (let i = 0; i < px.length; i += 4) {
+        px[i + 1] = px[i + 2] = px[i];
+        px[i + 3] = 255;
+      }
+      ctx.putImageData(d, 0, 0);
+      return new Promise(r => cv.toBlob(r, 'image/png'));
     }
     // ambang Otsu
     const total = px.length / 4;
@@ -201,7 +227,7 @@
     return new Promise(r => cv.toBlob(r, 'image/png'));
   }
 
-  async function ocrImage(fileOrBlob) {
+  async function ocrImage(fileOrBlob, binarize) {
     await loadScript(TESSERACT_URL);
     const worker = await window.Tesseract.createWorker('ind', 1, {
       logger: m => {
@@ -211,7 +237,7 @@
       },
     });
     try {
-      const prepared = await preprocessForOcr(fileOrBlob).catch(() => fileOrBlob);
+      const prepared = await preprocessForOcr(fileOrBlob, binarize !== false).catch(() => fileOrBlob);
       // Tesseract.js v5 tidak lagi mengembalikan data.lines secara default —
       // struktur baris/kata harus diminta lewat parameter output `blocks`.
       const { data } = await worker.recognize(prepared, {}, { text: true, blocks: true });

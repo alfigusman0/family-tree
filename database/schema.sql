@@ -80,6 +80,18 @@ CREATE TABLE IF NOT EXISTS marriages (
   CONSTRAINT fk_m_wife    FOREIGN KEY (wife_id)    REFERENCES persons(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Tautan tamu: lihat pohon tanpa login, dengan masa berlaku
+CREATE TABLE IF NOT EXISTS share_links (
+  id         INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  tree_id    INT UNSIGNED NOT NULL,
+  token      VARCHAR(40) NOT NULL UNIQUE,
+  expires_at DATETIME NOT NULL,
+  created_by INT UNSIGNED NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_sl_tree FOREIGN KEY (tree_id) REFERENCES trees(id) ON DELETE CASCADE,
+  CONSTRAINT fk_sl_user FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Log aktivitas untuk kolaborasi ("siapa mengubah apa")
 CREATE TABLE IF NOT EXISTS activities (
   id         INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,

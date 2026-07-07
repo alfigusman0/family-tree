@@ -28,9 +28,18 @@ dan diisi bersama, mendukung **poligami/menikah lagi**, upload foto, serta
 - **Kanvas interaktif** — seret untuk geser, scroll/cubit dua jari untuk zoom,
   klik kartu untuk detail, tombol **+** pada kartu untuk menambah keluarga
   langsung dari kanvas; tombol *Fit* memuat seluruh pohon. Responsive untuk HP.
-- **Lipat cabang** — tombol kecil di bawah kartu menyembunyikan/menampilkan
-  seluruh keturunan (badge menunjukkan jumlah yang tersembunyi); tersimpan
+- **Lipat cabang dua arah** — tombol ▾ di bawah kartu menyembunyikan keturunan,
+  tombol ▴ di atas kartu menyembunyikan cabang orang tua/leluhur. Pasangan dan
+  keluarga mertua dari cabang yang dilipat ikut tersembunyi sehingga kanvas
+  benar-benar rapi; badge +N menunjukkan jumlah yang tersembunyi. Tersimpan
   per pohon di browser.
+- **Ekspor SVG** — unduh pohon sebagai berkas vektor (tidak pecah saat
+  diperbesar/dicetak), foto ikut tertanam.
+- **Tautan tamu** — bagikan tampilan pohon tanpa perlu akun, dengan masa
+  berlaku (1/3/7/30 hari); NIK tidak ditampilkan ke tamu. Tautan bisa
+  dicabut kapan saja.
+- **Mode warna garis** — opsi memberi warna berbeda per keluarga/pernikahan
+  agar garis mudah ditelusuri; default tetap monokrom.
 - **Urutan anak** — field "Anak ke-" menentukan posisi antar saudara
   (fallback: tanggal lahir). Import KK mengisinya otomatis sesuai urutan baris.
 - **Status meninggal** — checkbox + tanggal wafat, tersedia juga di tabel

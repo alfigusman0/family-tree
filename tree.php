@@ -53,6 +53,8 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
       <button class="btn btn-sm" id="btn-import-kk">Import Kartu Keluarga</button>
       <?php endif; ?>
       <button class="btn btn-sm" id="btn-search">Cari orang</button>
+      <button class="btn btn-sm" id="btn-colors" title="Beri warna berbeda per keluarga/pernikahan">Warna garis</button>
+      <button class="btn btn-sm" id="btn-export-svg" title="Unduh pohon sebagai berkas SVG (vektor, tidak pecah)">Ekspor SVG</button>
     </div>
     <svg id="tree-svg" xmlns="http://www.w3.org/2000/svg"></svg>
     <div class="canvas-zoom">
@@ -232,6 +234,24 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
     <?php if ($role === 'owner'): ?>
     <button class="btn btn-sm" id="btn-regen-codes">Ganti kedua kode (kode lama hangus)</button>
     <?php endif; ?>
+
+    <?php if ($canEdit): ?>
+    <div class="section-label" style="margin-top:18px">Tautan tamu — tanpa login</div>
+    <p style="font-size:13px;color:var(--ink-2);margin-bottom:8px">
+      Siapa pun yang punya tautan ini bisa <strong>melihat</strong> pohon tanpa membuat akun,
+      sampai batas waktunya habis.
+    </p>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+      <select id="guest-days" style="width:auto">
+        <option value="1">1 hari</option>
+        <option value="3">3 hari</option>
+        <option value="7" selected>7 hari</option>
+        <option value="30">30 hari</option>
+      </select>
+      <button class="btn btn-primary btn-sm" id="guest-create">Buat tautan tamu</button>
+    </div>
+    <div id="guest-links"></div>
+    <?php endif; ?>
   </div>
 </div>
 
@@ -285,6 +305,7 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
 <script>
 window.CSRF    = <?= json_encode(csrf_token()) ?>;
 window.TREE_ID = <?= (int) $treeId ?>;
+window.TREE_NAME = <?= json_encode($tree['name']) ?>;
 window.CAN_EDIT = <?= $canEdit ? 'true' : 'false' ?>;
 window.MY_ROLE  = <?= json_encode($role) ?>;
 window.MY_USER_ID = <?= (int) $user['id'] ?>;
