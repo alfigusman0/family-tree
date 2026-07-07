@@ -77,16 +77,19 @@ try {
     }
 
     $insertPerson = $pdo->prepare(
-        'INSERT INTO persons (tree_id, full_name, gender, nik, birth_place, birth_date, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO persons (tree_id, full_name, gender, nik, birth_place, birth_date, birth_order,
+                              is_deceased, death_date, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     );
-    $createPerson = function (string $name, string $gender, string $nik = '', string $birthPlace = '', ?string $birthDate = null)
+    $createPerson = function (string $name, string $gender, string $nik = '', string $birthPlace = '',
+                              ?string $birthDate = null, ?int $birthOrder = null,
+                              int $isDeceased = 0, ?string $deathDate = null)
         use ($insertPerson, $pdo, $treeId, $uid, &$byName, &$byNik): array {
         $insertPerson->execute([
             $treeId, mb_substr($name, 0, 150), $gender,
             $nik !== '' ? substr($nik, 0, 20) : null,
             mb_substr($birthPlace, 0, 120) ?: null,
-            $birthDate, $uid,
+            $birthDate, $birthOrder, $isDeceased, $deathDate, $uid,
         ]);
         $p = [
             'id' => (int) $pdo->lastInsertId(), 'full_name' => $name, 'gender' => $gender,
@@ -138,6 +141,10 @@ try {
         $gender = ($r['gender'] ?? '') === 'P' ? 'P' : 'L';
         $nik    = preg_replace('/\D+/', '', $r['nik'] ?? '');
         $rel    = $r['relation'] ?? 'lainnya';
+        $order  = (int) ($r['birth_order'] ?? 0);
+        $order  = ($order >= 1 && $order <= 99) ? $order : null;
+        $dead   = !empty($r['is_deceased']) ? 1 : 0;
+        $death  = valid_date($r['death_date'] ?? '');
 
         if ($name === '') {
             throw new RuntimeException('Baris ' . ($i + 1) . ': nama wajib diisi.');
@@ -158,12 +165,18 @@ try {
             if ($nik !== '' && empty($person['nik'])) { $upd[] = 'nik = ?'; $par[] = substr($nik, 0, 20); }
             if (valid_date($r['birth_date'] ?? '')) { $upd[] = 'birth_date = COALESCE(birth_date, ?)'; $par[] = valid_date($r['birth_date']); }
             if (trim($r['birth_place'] ?? '') !== '') { $upd[] = 'birth_place = COALESCE(birth_place, ?)'; $par[] = mb_substr(trim($r['birth_place']), 0, 120); }
+            if ($order !== null) { $upd[] = 'birth_order = COALESCE(birth_order, ?)'; $par[] = $order; }
+            if ($dead) { $upd[] = 'is_deceased = 1'; }
+            if ($death !== null) { $upd[] = 'death_date = COALESCE(death_date, ?)'; $par[] = $death; }
             if ($upd) {
                 $par[] = $person['id'];
                 $pdo->prepare('UPDATE persons SET ' . implode(', ', $upd) . ' WHERE id = ?')->execute($par);
             }
         } else {
-            $person = $createPerson($name, $gender, $nik, trim($r['birth_place'] ?? ''), valid_date($r['birth_date'] ?? ''));
+            $person = $createPerson(
+                $name, $gender, $nik, trim($r['birth_place'] ?? ''),
+                valid_date($r['birth_date'] ?? ''), $order, $dead, $death
+            );
             $stats['created']++;
         }
         $persons[$i] = $person;

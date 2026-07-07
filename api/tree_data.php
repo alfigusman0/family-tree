@@ -9,8 +9,8 @@ $treeId = (int) ($_GET['tree_id'] ?? 0);
 $role   = require_tree_access($treeId, (int) $user['id']);
 
 $st = db()->prepare(
-    'SELECT id, full_name, nickname, gender, nik, birth_place, birth_date, death_date,
-            is_deceased, photo, father_id, mother_id, notes
+    'SELECT id, full_name, nickname, gender, nik, birth_place, birth_date, birth_order,
+            death_date, is_deceased, photo, father_id, mother_id, notes
      FROM persons WHERE tree_id = ? ORDER BY birth_date IS NULL, birth_date, id'
 );
 $st->execute([$treeId]);

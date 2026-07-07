@@ -34,6 +34,7 @@ function person_fields(array $in): array
         }
     }
     $nik = preg_replace('/\D+/', '', $in['nik'] ?? '');
+    $order = (int) ($in['birth_order'] ?? 0);
     return [
         'full_name'   => mb_substr($name, 0, 150),
         'nickname'    => mb_substr(trim($in['nickname'] ?? ''), 0, 80) ?: null,
@@ -41,6 +42,7 @@ function person_fields(array $in): array
         'nik'         => $nik !== '' ? substr($nik, 0, 20) : null,
         'birth_place' => mb_substr(trim($in['birth_place'] ?? ''), 0, 120) ?: null,
         'birth_date'  => $birth ?: null,
+        'birth_order' => ($order >= 1 && $order <= 99) ? $order : null,
         'death_date'  => $death ?: null,
         'is_deceased' => !empty($in['is_deceased']) ? 1 : 0,
         'notes'       => trim($in['notes'] ?? '') ?: null,
@@ -120,13 +122,13 @@ if ($method === 'POST') {
     }
 
     $st = db()->prepare(
-        'INSERT INTO persons (tree_id, full_name, nickname, gender, nik, birth_place, birth_date, death_date,
-                              is_deceased, father_id, mother_id, notes, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO persons (tree_id, full_name, nickname, gender, nik, birth_place, birth_date, birth_order,
+                              death_date, is_deceased, father_id, mother_id, notes, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     );
     $st->execute([
         $treeId, $f['full_name'], $f['nickname'], $f['gender'], $f['nik'], $f['birth_place'],
-        $f['birth_date'], $f['death_date'], $f['is_deceased'], $fatherId, $motherId, $f['notes'], $uid,
+        $f['birth_date'], $f['birth_order'], $f['death_date'], $f['is_deceased'], $fatherId, $motherId, $f['notes'], $uid,
     ]);
     $personId = (int) db()->lastInsertId();
     $new      = ['id' => $personId, 'gender' => $f['gender']];
@@ -215,11 +217,11 @@ if ($method === 'PUT') {
 
     $st = db()->prepare(
         'UPDATE persons SET full_name=?, nickname=?, gender=?, nik=?, birth_place=?, birth_date=?,
-                death_date=?, is_deceased=?, father_id=?, mother_id=?, notes=? WHERE id=?'
+                birth_order=?, death_date=?, is_deceased=?, father_id=?, mother_id=?, notes=? WHERE id=?'
     );
     $st->execute([
         $f['full_name'], $f['nickname'], $f['gender'], $f['nik'], $f['birth_place'], $f['birth_date'],
-        $f['death_date'], $f['is_deceased'], $fatherId, $motherId, $f['notes'], $personId,
+        $f['birth_order'], $f['death_date'], $f['is_deceased'], $fatherId, $motherId, $f['notes'], $personId,
     ]);
 
     log_activity($treeId, $uid, 'person_edit', 'Memperbarui data ' . $f['full_name']);

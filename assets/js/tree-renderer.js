@@ -16,8 +16,8 @@
   const CARD_H = 64;
   const SIB_GAP = 26;      // jarak antar blok saudara
   const SPOUSE_GAP = 26;   // jarak antar kartu pasangan dalam satu baris
-  const GROUP_GAP = 44;    // jarak antar kelompok anak dari pernikahan berbeda
-  const ROOT_GAP = 90;     // jarak antar pohon akar
+  const GROUP_GAP = 56;    // jarak antar kelompok anak dari pernikahan berbeda
+  const ROOT_GAP = 120;    // jarak antar pohon akar
   const NS = 'http://www.w3.org/2000/svg';
 
   function el(name, attrs) {
@@ -57,6 +57,14 @@
       this.positions = new Map();  // personId -> {x, y}
       this.selectedId = null;
       this.tx = 40; this.ty = 40; this.scale = 1;
+
+      // cabang yang dilipat (persist per pohon di localStorage)
+      this.collapsed = new Set();
+      this._storageKey = 'silsilah-collapsed-' + (this.opts.treeId || 0);
+      try {
+        JSON.parse(localStorage.getItem(this._storageKey) || '[]')
+          .forEach(id => this.collapsed.add(Number(id)));
+      } catch (e) { /* abaikan */ }
 
       this.root = el('g', {});
       this.svg.appendChild(this.root);
@@ -113,7 +121,11 @@
     }
 
     _sortByBirth(arr) {
+      // urutan: "anak ke-" manual dulu, lalu tanggal lahir, terakhir urutan input
       return arr.sort((a, b) => {
+        const oa = Number(a.birth_order) || 999;
+        const ob = Number(b.birth_order) || 999;
+        if (oa !== ob) return oa - ob;
         const da = a.birth_date || '9999-99-99';
         const db = b.birth_date || '9999-99-99';
         return da < db ? -1 : da > db ? 1 : Number(a.id) - Number(b.id);
@@ -123,6 +135,78 @@
     _hasParents(p) {
       return !!(p.father_id && this.persons.has(Number(p.father_id))) ||
              !!(p.mother_id && this.persons.has(Number(p.mother_id)));
+    }
+
+    _hasChildren(pid) {
+      let found = false;
+      this.persons.forEach(c => {
+        if (Number(c.father_id) === pid || Number(c.mother_id) === pid) found = true;
+      });
+      return found;
+    }
+
+    _countDescendants(pid, seen) {
+      seen = seen || new Set();
+      let n = 0;
+      this.persons.forEach(c => {
+        const cid = Number(c.id);
+        if (seen.has(cid)) return;
+        if (Number(c.father_id) === pid || Number(c.mother_id) === pid) {
+          seen.add(cid);
+          n += 1 + this._countDescendants(cid, seen);
+        }
+      });
+      return n;
+    }
+
+    toggleCollapse(pid) {
+      pid = Number(pid);
+      if (this.collapsed.has(pid)) this.collapsed.delete(pid);
+      else this.collapsed.add(pid);
+      try {
+        localStorage.setItem(this._storageKey, JSON.stringify([...this.collapsed]));
+      } catch (e) { /* abaikan */ }
+      this.render();
+    }
+
+    /**
+     * Hitung orang yang disembunyikan karena cabang dilipat: seluruh keturunan
+     * dari tiap orang yang dilipat, plus pasangan (tanpa orang tua di pohon)
+     * yang semua partnernya ikut tersembunyi.
+     */
+    _computeHidden() {
+      const hidden = new Set();
+      const addDesc = (pid) => {
+        this.persons.forEach(c => {
+          const cid = Number(c.id);
+          if (hidden.has(cid)) return;
+          if (Number(c.father_id) === pid || Number(c.mother_id) === pid) {
+            hidden.add(cid);
+            addDesc(cid);
+          }
+        });
+      };
+      this.collapsed.forEach(pid => {
+        if (this.persons.has(Number(pid))) addDesc(Number(pid));
+      });
+      let changed = true;
+      while (changed) {
+        changed = false;
+        this.persons.forEach(p => {
+          const pid = Number(p.id);
+          if (hidden.has(pid) || this._hasParents(p)) return;
+          const ms = this._marriagesOf(pid);
+          if (!ms.length) return;
+          const allHidden = ms.every(m =>
+            hidden.has(m.husband_id === pid ? m.wife_id : m.husband_id));
+          if (allHidden) {
+            hidden.add(pid);
+            changed = true;
+            addDesc(pid);
+          }
+        });
+      }
+      return hidden;
     }
 
     /**
@@ -142,7 +226,7 @@
       for (const m of marriages) {
         const spouseId = m.husband_id === pid ? m.wife_id : m.husband_id;
         const spouse = this.persons.get(spouseId);
-        if (!spouse) continue;
+        if (!spouse || this.hidden.has(spouseId)) continue;
         if (!placed.has(spouseId)) {
           placed.add(spouseId);
           rowUnits.push({ marriage: m, spouse });
@@ -156,13 +240,13 @@
       for (let i = 0; i < marriages.length; i++) {
         const m = marriages[i];
         const kids = this._childrenOfPair(m.husband_id, m.wife_id)
-          .filter(k => !placed.has(Number(k.id)));
+          .filter(k => !placed.has(Number(k.id)) && !this.hidden.has(Number(k.id)));
         kids.forEach(k => { k._viaChild = true; }); // digambar lewat jalur anak
         const blocks = kids.map(k => this._buildBlock(k, placed));
         childGroups.push({ unitIndex: i, blocks });
       }
       const soloKidsList = this._childrenOfSingle(pid, person.gender)
-        .filter(k => !placed.has(Number(k.id)));
+        .filter(k => !placed.has(Number(k.id)) && !this.hidden.has(Number(k.id)));
       soloKidsList.forEach(k => { k._viaChild = true; });
       const soloKids = soloKidsList.map(k => this._buildBlock(k, placed));
       if (soloKids.length) childGroups.push({ unitIndex: null, blocks: soloKids });
@@ -181,7 +265,7 @@
       // ruang bus pernikahan di bawah baris kartu
       const busLevels = marriages.length + (soloKids.length ? 1 : 0);
       const busZone = busLevels > 0 ? 14 + busLevels * 14 : 0;
-      const vGap = childGroups.some(g => g.blocks.length) ? busZone + 36 : 0;
+      const vGap = childGroups.some(g => g.blocks.length) ? busZone + 46 : 0;
 
       const childHeights = childGroups.flatMap(g => g.blocks.map(b => b.height));
       const height = CARD_H + (childHeights.length ? vGap + Math.max(...childHeights) : 0);
@@ -201,6 +285,31 @@
             cx += CARD_W + SPOUSE_GAP;
             self._drawCard(u.spouse, cx, y);
             cardPos.set(Number(u.spouse.id), cx + CARD_W / 2);
+          }
+
+          // tombol lipat/buka cabang di bawah kartu (hanya bila punya anak)
+          if (self._hasChildren(pid)) {
+            const isCollapsed = self.collapsed.has(pid);
+            const label = isCollapsed ? '+' + self._countDescendants(pid) : '−';
+            const bw = Math.max(20, label.length * 8 + 10);
+            const tg = el('g', {
+              class: 'collapse-toggle' + (isCollapsed ? ' is-collapsed' : ''),
+              transform: `translate(${cardPos.get(pid)},${y + CARD_H})`,
+            });
+            tg.appendChild(el('rect', { x: -bw / 2, y: -9, width: bw, height: 18, rx: 9, class: 'ct-bg' }));
+            const tt = el('text', { x: 0, y: 4.5, 'text-anchor': 'middle', class: 'ct-label' });
+            tt.textContent = label;
+            tg.appendChild(tt);
+            const title = el('title', {});
+            title.textContent = isCollapsed
+              ? 'Tampilkan ' + self._countDescendants(pid) + ' keturunan'
+              : 'Sembunyikan cabang keturunan';
+            tg.appendChild(title);
+            tg.addEventListener('click', (e) => {
+              e.stopPropagation();
+              self.toggleCollapse(pid);
+            });
+            self._toggles.push(tg); // digambar paling akhir agar di atas garis
           }
 
           // 2. gambar bus pernikahan + kelompok anak
@@ -282,8 +391,9 @@
               tops.push(info.topCenterX);
               bx += b.width + SIB_GAP;
             }
-            // bus horizontal di atas anak-anak
-            const busY2 = childY - 16;
+            // bus horizontal di atas anak-anak — tinggi diselang-seling per
+            // kelompok agar bus pernikahan berbeda tidak saling menimpa
+            const busY2 = childY - 14 - (gi % 3) * 8;
             const minX = Math.min(drop.x, ...tops);
             const maxX = Math.max(drop.x, ...tops);
             self.root.appendChild(el('path', { d: `M ${drop.x} ${drop.y} V ${busY2}`, class: 'edge' }));
@@ -309,13 +419,15 @@
 
       const placed = new Set();
       this.persons.forEach(p => { p._viaChild = false; });
+      this.hidden = this._computeHidden();
+      this._toggles = [];
 
       // akar: tidak punya orang tua di pohon, dan bukan "pasangan yang menempel"
       // pada orang lain — orang seperti itu akan ditarik saat pasangannya dirender.
       const all = [];
       this.persons.forEach(p => all.push(p));
       const roots = this._sortByBirth(
-        all.filter(p => !this._hasParents(p))
+        all.filter(p => !this._hasParents(p) && !this.hidden.has(Number(p.id)))
       );
       // dahulukan yang punya keturunan/pernikahan agar pasangan menempel dengan benar
       roots.sort((a, b) => this._marriagesOf(Number(b.id)).length - this._marriagesOf(Number(a.id)).length);
@@ -328,7 +440,8 @@
         x += block.width + ROOT_GAP;
       }
       // pengaman: orang yang belum tergambar (data tak lazim) → baris terpisah
-      const leftovers = all.filter(p => !placed.has(Number(p.id)));
+      const leftovers = all.filter(p =>
+        !placed.has(Number(p.id)) && !this.hidden.has(Number(p.id)));
       if (leftovers.length) {
         let lx = 0;
         const ly = 40 + (this.root.getBBox ? 0 : 0);
@@ -358,6 +471,8 @@
       // pass-3: orang yang punya orang tua di pohon tetapi digambar di blok
       // lain (mis. menempel di samping pasangannya) — hubungkan ke orang
       // tuanya dengan garis putus-putus agar silsilahnya tetap terlihat.
+      // Ketinggian jalur diselang-seling agar antar garis tidak bertumpuk.
+      let lane = 0;
       this.persons.forEach(p => {
         const pidNum = Number(p.id);
         const pos = this.positions.get(pidNum);
@@ -366,14 +481,19 @@
           const par = this.persons.get(Number(p.father_id)) || this.persons.get(Number(p.mother_id));
           const ppos = par ? this.positions.get(Number(par.id)) : null;
           if (ppos) {
+            const laneY = pos.y - 10 - (lane % 4) * 7;
+            lane++;
             this.root.appendChild(el('path', {
-              d: `M ${ppos.x + CARD_W / 2} ${ppos.y + CARD_H} V ${pos.y - 12} H ${pos.x + CARD_W / 2} V ${pos.y}`,
+              d: `M ${ppos.x + CARD_W / 2} ${ppos.y + CARD_H} V ${laneY} H ${pos.x + CARD_W / 2} V ${pos.y}`,
               class: 'edge',
               'stroke-dasharray': '4 4',
             }));
           }
         }
       });
+
+      // tombol lipat digambar terakhir agar berada di atas semua garis
+      this._toggles.forEach(t => this.root.appendChild(t));
 
       this._applyTransform();
     }

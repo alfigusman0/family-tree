@@ -252,6 +252,17 @@ textarea { resize: vertical; min-height: 70px; }
 .node-card .name { font-size: 13px; font-weight: 600; fill: var(--ink); }
 .node-card .years { font-size: 11px; fill: var(--ink-3); }
 .node-card.deceased .name { fill: var(--ink-3); }
+.collapse-toggle { cursor: pointer; }
+.collapse-toggle .ct-bg {
+  fill: var(--surface); stroke: var(--border-strong); stroke-width: 1;
+}
+.collapse-toggle:hover .ct-bg { stroke: var(--accent); }
+.collapse-toggle .ct-label {
+  font-family: var(--font); font-size: 12px; font-weight: 700; fill: var(--ink-2);
+  pointer-events: none;
+}
+.collapse-toggle.is-collapsed .ct-bg { fill: var(--accent); stroke: var(--accent); }
+.collapse-toggle.is-collapsed .ct-label { fill: var(--accent-ink); }
 .node-card .card-plus { opacity: 0; transition: opacity .12s; cursor: pointer; }
 .node-card:hover .card-plus, .node-card.selected .card-plus { opacity: 1; }
 @media (hover: none) { .node-card .card-plus { opacity: 1; } } /* layar sentuh: selalu tampak */
@@ -364,6 +375,7 @@ textarea { resize: vertical; min-height: 70px; }
 .review-table td.col-name  { min-width: 170px; }
 .review-table td.col-nik   { min-width: 150px; }
 .review-table td.col-date  { min-width: 130px; }
+.review-table td.col-dead  { min-width: 140px; }
 .review-table .row-remove { color: var(--danger); background: none; border: 0; cursor: pointer; font-size: 16px; padding: 4px; }
 
 /* ---------- daftar orang (pencarian) ---------- */

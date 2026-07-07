@@ -3,3 +3,6 @@ uploads/*
 config.local.php
 storage/sessions/*
 !storage/.htaccess
+# contoh Kartu Keluarga berisi data pribadi — jangan pernah commit
+training/
+kk1-ocr-test.pdf

@@ -26,7 +26,15 @@ dan diisi bersama, mendukung **poligami/menikah lagi**, upload foto, serta
     anak otomatis dihubungkan.
 - **Foto profil** — unggah JPG/PNG/WebP (maks 5 MB), otomatis diperkecil di server.
 - **Kanvas interaktif** — seret untuk geser, scroll/cubit dua jari untuk zoom,
-  klik kartu untuk detail; tombol *Fit* memuat seluruh pohon. Responsive untuk HP.
+  klik kartu untuk detail, tombol **+** pada kartu untuk menambah keluarga
+  langsung dari kanvas; tombol *Fit* memuat seluruh pohon. Responsive untuk HP.
+- **Lipat cabang** — tombol kecil di bawah kartu menyembunyikan/menampilkan
+  seluruh keturunan (badge menunjukkan jumlah yang tersembunyi); tersimpan
+  per pohon di browser.
+- **Urutan anak** — field "Anak ke-" menentukan posisi antar saudara
+  (fallback: tanggal lahir). Import KK mengisinya otomatis sesuai urutan baris.
+- **Status meninggal** — checkbox + tanggal wafat, tersedia juga di tabel
+  review import; kartu menampilkan tanda †.
 
 ## Teknologi
 

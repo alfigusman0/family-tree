@@ -110,6 +110,10 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
         <span>Tanggal lahir</span>
         <input type="date" id="pf-birthdate">
       </label>
+      <label class="field" style="max-width:110px">
+        <span>Anak ke- <small>(urutan)</small></span>
+        <input type="number" id="pf-birthorder" min="1" max="99" placeholder="cth. 2">
+      </label>
     </div>
     <label class="checkbox-line"><input type="checkbox" id="pf-deceased"> Sudah meninggal</label>
     <label class="field" id="pf-deathdate-wrap" style="display:none">
@@ -260,7 +264,8 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
           <thead>
             <tr>
               <th>Nama lengkap</th><th>NIK</th><th>JK</th><th>Tempat lahir</th>
-              <th>Tgl lahir</th><th>Hubungan</th><th>Nama ayah</th><th>Nama ibu</th><th></th>
+              <th>Tgl lahir</th><th>Hubungan</th><th>Anak ke-</th>
+              <th>Nama ayah</th><th>Nama ibu</th><th>Meninggal</th><th></th>
             </tr>
           </thead>
           <tbody id="review-rows"></tbody>

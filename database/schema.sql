@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS persons (
   nik         VARCHAR(20) NULL,
   birth_place VARCHAR(120) NULL,
   birth_date  DATE NULL,
+  birth_order TINYINT UNSIGNED NULL,             -- anak ke-berapa (urutan manual)
   death_date  DATE NULL,
   is_deceased TINYINT(1) NOT NULL DEFAULT 0,
   photo       VARCHAR(255) NULL,

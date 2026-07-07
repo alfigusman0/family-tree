@@ -94,6 +94,7 @@
         alert('Format tidak didukung. Gunakan JPG, PNG, atau PDF.');
         return;
       }
+      window.KKImport._lastLines = positioned; // untuk diagnosis hasil pembacaan
       const rows = parseKK(positioned);
       if (!rows.length) {
         alert('Tidak ada data anggota keluarga yang terbaca. Anda tetap bisa mengisi tabel secara manual.');
@@ -153,6 +154,53 @@
 
   /* ---------- OCR (dengan posisi kata) ---------- */
 
+  /**
+   * Pra-proses gambar agar OCR jauh lebih akurat: perbesar (min lebar 2200 px),
+   * ubah ke skala abu-abu, lalu binarisasi dengan ambang Otsu.
+   */
+  async function preprocessForOcr(fileOrBlob) {
+    const img = await createImageBitmap(fileOrBlob);
+    const scale = Math.max(1, 2200 / img.width);
+    const cv = document.createElement('canvas');
+    cv.width = Math.round(img.width * scale);
+    cv.height = Math.round(img.height * scale);
+    const ctx = cv.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, 0, 0, cv.width, cv.height);
+
+    const d = ctx.getImageData(0, 0, cv.width, cv.height);
+    const px = d.data;
+    const hist = new Array(256).fill(0);
+    for (let i = 0; i < px.length; i += 4) {
+      const g = (px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114) | 0;
+      px[i] = g;
+      hist[g]++;
+    }
+    // ambang Otsu
+    const total = px.length / 4;
+    let sumAll = 0;
+    for (let t = 0; t < 256; t++) sumAll += t * hist[t];
+    let sumB = 0, wB = 0, maxVar = 0, thr = 127;
+    for (let t = 0; t < 256; t++) {
+      wB += hist[t];
+      if (!wB) continue;
+      const wF = total - wB;
+      if (!wF) break;
+      sumB += t * hist[t];
+      const mB = sumB / wB, mF = (sumAll - sumB) / wF;
+      const v = wB * wF * (mB - mF) * (mB - mF);
+      if (v > maxVar) { maxVar = v; thr = t; }
+    }
+    for (let i = 0; i < px.length; i += 4) {
+      const v = px[i] > thr ? 255 : 0;
+      px[i] = px[i + 1] = px[i + 2] = v;
+      px[i + 3] = 255;
+    }
+    ctx.putImageData(d, 0, 0);
+    return new Promise(r => cv.toBlob(r, 'image/png'));
+  }
+
   async function ocrImage(fileOrBlob) {
     await loadScript(TESSERACT_URL);
     const worker = await window.Tesseract.createWorker('ind', 1, {
@@ -163,16 +211,28 @@
       },
     });
     try {
-      const { data } = await worker.recognize(fileOrBlob);
+      const prepared = await preprocessForOcr(fileOrBlob).catch(() => fileOrBlob);
+      // Tesseract.js v5 tidak lagi mengembalikan data.lines secara default —
+      // struktur baris/kata harus diminta lewat parameter output `blocks`.
+      const { data } = await worker.recognize(prepared, {}, { text: true, blocks: true });
+
+      const ocrLines = [];
+      if (Array.isArray(data.lines) && data.lines.length) {
+        ocrLines.push(...data.lines); // kompatibilitas v2–v4
+      } else if (Array.isArray(data.blocks)) {
+        data.blocks.forEach(b => (b.paragraphs || []).forEach(pg =>
+          (pg.lines || []).forEach(l => ocrLines.push(l))));
+      }
+
       // susun baris dari kata + posisinya; Y dibalik agar konsisten dengan PDF (atas = besar)
       const words = [];
-      (data.lines || []).forEach(line => {
+      ocrLines.forEach(line => {
         (line.words || []).forEach(w => {
-          words.push({ x: w.bbox.x0, y: -((w.bbox.y0 + w.bbox.y1) / 2), str: w.text });
+          if (w.bbox) words.push({ x: w.bbox.x0, y: -((w.bbox.y0 + w.bbox.y1) / 2), str: w.text });
         });
       });
       if (words.length) {
-        const heights = (data.lines || []).map(l => l.bbox.y1 - l.bbox.y0).sort((a, b) => a - b);
+        const heights = ocrLines.filter(l => l.bbox).map(l => l.bbox.y1 - l.bbox.y0).sort((a, b) => a - b);
         const tol = Math.max(8, (heights[Math.floor(heights.length / 2)] || 20) * 0.6);
         return groupLines(words, tol);
       }
@@ -188,7 +248,7 @@
   /* ---------- parser Kartu Keluarga ---------- */
 
   const REL_PATTERNS = [
-    { re: /KEPALA\s*KELUARGA/i, rel: 'kepala' },
+    { re: /KEPALA/i, rel: 'kepala' }, // cukup "KEPALA" — footer dinas sudah difilter
     { re: /\bISTERI\b|\bISTRI\b/i, rel: 'istri' },
     { re: /\bSUAMI\b/i, rel: 'suami' },
     { re: /\bANAK\b/i, rel: 'anak' },
@@ -206,16 +266,24 @@
     const byNum = new Map(); // nomor baris KK → row
     const seenNik = new Set();
 
-    /* --- tabel 1: biodata (jangkar NIK 16 digit) --- */
+    // OCR sering salah membaca digit NIK (O↔0, l/I↔1, dst.) — perbaiki hanya
+    // pada deretan panjang yang jelas dimaksudkan sebagai angka.
+    const fixDigitRun = s => s.replace(/[0-9OoQDlI|Ss]{15,20}/g, run => {
+      const mapped = run.replace(/[OoQD]/g, '0').replace(/[lI|]/g, '1').replace(/[Ss]/g, '5');
+      return /^\d+$/.test(mapped) ? mapped : run;
+    });
+
+    /* --- tabel 1: biodata (jangkar NIK 15–17 digit, toleran salah baca) --- */
     textLines.forEach(line => {
-      const compact = line.replace(/(\d)\s+(?=\d)/g, '$1');
-      const nikMatch = compact.match(/\b(\d{16})\b/);
+      const compact = fixDigitRun(line.replace(/(\d)\s+(?=\d)/g, '$1'));
+      const nikMatch = compact.match(/\b(\d{15,17})\b/);
       if (!nikMatch) return;
-      const nik = nikMatch[1];
+      const nik = nikMatch[1].slice(0, 16);
       if (seenNik.has(nik)) return;
 
       const beforeNik = compact.slice(0, compact.indexOf(nik));
       const numMatch = beforeNik.match(/^\s*(\d{1,2})\s+/);
+      const hasRowNum = numMatch !== null;
       const rowNum = numMatch ? Number(numMatch[1]) : rows.length + 1;
 
       let name = (beforeNik.match(/[A-Za-z][A-Za-z'.,\s]{2,}/g) || []).join(' ')
@@ -237,8 +305,11 @@
       if (pm) birthPlace = pm[0].replace(/\b\d.*$/, '').trim();
 
       if (name.length < 3 || /^NO[.:]?$/i.test(name)) name = '';
-      // nomor Kartu Keluarga di header juga 16 digit — bukan anggota:
-      // baris anggota selalu punya jenis kelamin / tanggal lahir / nama
+      // nomor Kartu Keluarga di header juga 16 digit — bedanya: baris anggota
+      // selalu punya isi kolom lain SETELAH NIK (JK, tempat/tgl lahir, dst.),
+      // sedangkan baris "No. xxxx" berhenti di angkanya.
+      const tail = compact.slice(compact.indexOf(nik) + nik.length).replace(/[^A-Za-z0-9]/g, '');
+      if (!gender && !birth && tail.length < 4 && !(hasRowNum && name !== '')) return;
       if (!name && !gender && !birth) return;
       seenNik.add(nik);
       const row = {
@@ -248,6 +319,30 @@
       rows.push(row);
       byNum.set(rowNum, row);
     });
+
+    /* --- cadangan: NIK tak terbaca sama sekali (foto kurang jelas) —
+           deteksi baris anggota dari kata LAKI-LAKI / PEREMPUAN --- */
+    if (rows.length === 0) {
+      textLines.forEach(line => {
+        const gm = line.match(/LAKI[- ]?LAKI|PEREMPUAN|WANITA/i);
+        if (!gm) return;
+        const before = line.slice(0, gm.index);
+        let name = (before.match(/[A-Za-z][A-Za-z'.,\s]{2,}/g) || []).join(' ')
+          .replace(/^\s*\d+\s*/, '').replace(/\s{2,}/g, ' ').trim();
+        name = name.replace(/\b[0-9OolI|]{6,}\b/g, '').replace(/\s{2,}/g, ' ').trim();
+        if (name.length < 3) return;
+        const gender = /PEREMPUAN|WANITA/i.test(gm[0]) ? 'P' : 'L';
+        let birth = '';
+        const dm = line.replace(/(\d)\s+(?=\d)/g, '$1').match(/\b(\d{2})[-\/](\d{2})[-\/](\d{4})\b/);
+        if (dm) birth = `${dm[3]}-${dm[2]}-${dm[1]}`;
+        const row = {
+          full_name: name, nik: '', gender, birth_place: '', birth_date: birth,
+          relation: '', father_name: '', mother_name: '', marriage_date: '',
+        };
+        rows.push(row);
+        byNum.set(rows.length, row);
+      });
+    }
 
     /* --- tabel 2: status hubungan + nama orang tua --- */
     // posisi kolom Ayah/Ibu dari baris header ("Ayah"/"Ibu" atau "(16)"/"(17)")
@@ -265,21 +360,31 @@
       }
     }
 
-    const STATUS_RE = /KAWIN|CERAI|BELUM/i;
+    const STATUS_RE = /KAWIN|CERAI|BELUM|TERCA/i;
+    // kumpulkan baris tabel status dulu; pemetaan ke anggota memakai nomor
+    // baris bila terbaca, atau urutan kemunculan bila tidak (umum pada OCR).
+    const statusLines = [];
     positioned.forEach(line => {
       const text = line.items.map(i => i.str).join(' ');
-      const numMatch = text.match(/^\s*(\d{1,2})\b/);
-      if (!numMatch) return;
       let rel = '';
       for (const rp of REL_PATTERNS) {
         if (rp.re.test(text)) { rel = rp.rel; break; }
       }
       if (!rel && !STATUS_RE.test(text)) return; // bukan baris tabel status
       // jangan tertukar dengan baris tabel 1 (yang ber-NIK)
-      if (/\d{16}/.test(text.replace(/\s+/g, ''))) return;
+      if (/\d{15,17}/.test(text.replace(/\s+/g, ''))) return;
+      // buang header/footer dokumen yang kebetulan memuat kata kunci
+      if (/[:]|DINAS|KEPENDUDUKAN|PENCATATAN|SIPIL|STATUS|HUBUNGAN/i.test(text)) return;
+      const numMatch = text.match(/^\s*(\d{1,2})\b/);
+      statusLines.push({ line, text, rel, rowNum: numMatch ? Number(numMatch[1]) : null });
+    });
 
-      const rowNum = Number(numMatch[1]);
-      const row = byNum.get(rowNum);
+    let seq = 0; // fallback pemetaan berurutan
+    statusLines.forEach(sl => {
+      const { line, text, rel } = sl;
+      let row = sl.rowNum !== null ? byNum.get(sl.rowNum) : null;
+      if (!row) row = rows[seq];
+      seq++;
       if (!row) return;
 
       if (rel) row.relation = rel;
@@ -297,9 +402,11 @@
         '|\\d{2}[-\\/]\\d{2}[-\\/]\\d{4})$', 'i');
       const knownToken = /^(\d{1,2}|-|WNI|WNA|KAWIN|TERCATAT|BELUM|CERAI|HIDUP|MATI|KEPALA|KELUARGA|ISTRI|ISTERI|SUAMI|ANAK|CUCU|MENANTU|ORANG|TUA|MERTUA|FAMILI|LAIN(NYA)?|\d{2}[-\/]\d{2}[-\/]\d{4})$/i;
 
+      // nama pada KK selalu huruf kapital — item bercampur huruf kecil adalah
+      // sisa kolom lain yang salah baca OCR, jangan dijadikan nama orang tua.
       const nameItems = line.items.filter(i => {
         const t = i.str.replace(/\s{2,}/g, ' ').trim();
-        return t && !knownPhrase.test(t) && /[A-Za-z]{2,}/.test(t);
+        return t && !knownPhrase.test(t) && /^[A-Z][A-Z'.\s-]{2,}$/.test(t);
       });
       if (!nameItems.length) return;
 
@@ -331,6 +438,11 @@
         else r.gender = 'L';
       }
     });
+    // urutan anak mengikuti urutan baris pada KK (anak ke-1, ke-2, ...)
+    let anakKe = 0;
+    rows.forEach(r => {
+      if (r.relation === 'anak') r.birth_order = ++anakKe;
+    });
 
     return rows;
   }
@@ -343,6 +455,7 @@
     r = r || {
       full_name: '', nik: '', gender: 'L', birth_place: '', birth_date: '',
       relation: 'anak', father_name: '', mother_name: '', marriage_date: '',
+      birth_order: '', is_deceased: 0, death_date: '',
     };
     const tr = document.createElement('tr');
     tr.innerHTML = `
@@ -365,8 +478,13 @@
           <option value="lainnya"${r.relation === 'lainnya' ? ' selected' : ''}>Lainnya</option>
         </select>
       </td>
+      <td><input type="number" data-f="birth_order" value="${esc(r.birth_order)}" min="1" max="99" placeholder="-" style="width:58px"></td>
       <td class="col-name"><input type="text" data-f="father_name" value="${esc(r.father_name)}" placeholder="Nama ayah"></td>
       <td class="col-name"><input type="text" data-f="mother_name" value="${esc(r.mother_name)}" placeholder="Nama ibu"></td>
+      <td class="col-dead">
+        <label class="checkbox-line" style="margin:0 0 4px"><input type="checkbox" data-f="is_deceased"${Number(r.is_deceased) ? ' checked' : ''}> Ya</label>
+        <input type="date" data-f="death_date" value="${esc(r.death_date)}" title="Tanggal meninggal (opsional)">
+      </td>
       <td><input type="hidden" data-f="marriage_date" value="${esc(r.marriage_date)}"><button class="row-remove" title="Hapus baris">&times;</button></td>`;
     tr.querySelector('.row-remove').addEventListener('click', () => tr.remove());
     return tr;
@@ -390,6 +508,7 @@
         const inp = tr.querySelector(`[data-f="${f}"]`);
         return inp ? inp.value.trim() : '';
       };
+      const deadCb = tr.querySelector('[data-f="is_deceased"]');
       const row = {
         full_name: get('full_name'),
         nik: get('nik'),
@@ -397,9 +516,12 @@
         birth_place: get('birth_place'),
         birth_date: get('birth_date'),
         relation: get('relation'),
+        birth_order: Number(get('birth_order')) || null,
         father_name: get('father_name'),
         mother_name: get('mother_name'),
         marriage_date: get('marriage_date'),
+        is_deceased: deadCb && deadCb.checked ? 1 : 0,
+        death_date: get('death_date'),
       };
       if (row.full_name) rows.push(row);
     }

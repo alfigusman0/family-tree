@@ -13,6 +13,7 @@
   const svg = document.getElementById('tree-svg');
   const renderer = new TreeRenderer(svg, {
     canEdit: window.CAN_EDIT,
+    treeId: window.TREE_ID,
     onSelect(id) { selectPerson(id); },
     onDeselect() { selectPerson(null); hidePlusMenu(); },
     onPlus(id, cx, cy) { selectPerson(id); showPlusMenu(id, cx, cy); },
@@ -112,7 +113,7 @@
           <input type="file" id="photo-input" accept="image/jpeg,image/png,image/webp" style="display:none"></div>` : ''}
         <h4>${esc(p.full_name)}${Number(p.is_deceased) ? ' <span title="almarhum/almarhumah">†</span>' : ''}</h4>
         <div class="sub">
-          ${genderLabel}${p.nickname ? ' · dipanggil ' + esc(p.nickname) : ''}<br>
+          ${genderLabel}${p.birth_order ? ' · anak ke-' + Number(p.birth_order) : ''}${p.nickname ? ' · dipanggil ' + esc(p.nickname) : ''}<br>
           ${p.birth_place || p.birth_date ? 'Lahir: ' + esc(p.birth_place || '') + (p.birth_date ? (p.birth_place ? ', ' : '') + fmtDate(p.birth_date) : '') + '<br>' : ''}
           ${p.death_date ? 'Wafat: ' + fmtDate(p.death_date) + '<br>' : ''}
           ${p.nik ? 'NIK: ' + esc(p.nik) : ''}
@@ -153,13 +154,23 @@
         if (!groups.has(Number(otherId))) groups.set(Number(otherId), []);
         groups.get(Number(otherId)).push(c);
       }
+      const sortKids = arr => arr.slice().sort((a, b) => {
+        const oa = Number(a.birth_order) || 999;
+        const ob = Number(b.birth_order) || 999;
+        if (oa !== ob) return oa - ob;
+        const da = a.birth_date || '9999-99-99';
+        const db = b.birth_date || '9999-99-99';
+        return da < db ? -1 : da > db ? 1 : Number(a.id) - Number(b.id);
+      });
       for (const [otherId, kids] of groups) {
         const other = otherId ? state.byId.get(otherId) : null;
         if (groups.size > 1 || other) {
           html += `<div style="font-size:12.5px;color:var(--ink-3);margin:4px 0 4px 2px">dengan ${other ? esc(other.full_name) : 'pasangan tidak tercatat'}:</div>`;
         }
         html += `<ul class="rel-list">`;
-        for (const c of kids) html += relItem(c, c.gender === 'L' ? 'L' : 'P');
+        for (const c of sortKids(kids)) {
+          html += relItem(c, (c.birth_order ? 'ke-' + Number(c.birth_order) + ' · ' : '') + (c.gender === 'L' ? 'L' : 'P'));
+        }
         html += `</ul>`;
       }
     }
@@ -356,6 +367,7 @@
     document.getElementById('pf-nik').value = p.nik || '';
     document.getElementById('pf-birthplace').value = p.birth_place || '';
     document.getElementById('pf-birthdate').value = p.birth_date || '';
+    document.getElementById('pf-birthorder').value = p.birth_order || '';
     document.getElementById('pf-deathdate').value = p.death_date || '';
     document.getElementById('pf-notes').value = p.notes || '';
     const deceased = document.getElementById('pf-deceased');
@@ -383,6 +395,7 @@
       nik:        document.getElementById('pf-nik').value.trim(),
       birth_place: document.getElementById('pf-birthplace').value.trim(),
       birth_date: document.getElementById('pf-birthdate').value,
+      birth_order: Number(document.getElementById('pf-birthorder').value) || null,
       death_date: document.getElementById('pf-deceased').checked ? document.getElementById('pf-deathdate').value : '',
       is_deceased: document.getElementById('pf-deceased').checked ? 1 : 0,
       notes:      document.getElementById('pf-notes').value.trim(),
