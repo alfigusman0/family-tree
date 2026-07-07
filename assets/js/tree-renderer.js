@@ -223,11 +223,14 @@
       // garis putus-putus ke orang tuanya (pass-3). Dengan begitu suami-istri
       // dan anak-anaknya selalu tampil utuh dalam satu kelompok.
       const rowUnits = []; // {marriage, spouse|null(remote)}
+      // PENTING: rowUnits harus selalu sejajar indeks dengan `marriages` —
+      // fungsi draw() mengakses rowUnits[i] untuk marriages[i].
       for (const m of marriages) {
         const spouseId = m.husband_id === pid ? m.wife_id : m.husband_id;
         const spouse = this.persons.get(spouseId);
-        if (!spouse || this.hidden.has(spouseId)) continue;
-        if (!placed.has(spouseId)) {
+        if (!spouse || this.hidden.has(spouseId)) {
+          rowUnits.push({ marriage: m, spouse: null, hiddenSpouse: true });
+        } else if (!placed.has(spouseId)) {
           placed.add(spouseId);
           rowUnits.push({ marriage: m, spouse });
         } else {
@@ -327,9 +330,16 @@
 
           marriages.forEach((m, i) => {
             const u = rowUnits[i];
+            const pX = cardPos.get(pid);
+            if (!u || u.hiddenSpouse) {
+              // pasangan sedang disembunyikan (cabang dilipat) — tidak ada
+              // garis yang digambar; titik gantung anak fallback ke kartu ini
+              m._dropX = pX;
+              m._dropY = rowBottom;
+              return;
+            }
             const busY = rowBottom + 12 + level * 14;
             level++;
-            const pX = cardPos.get(pid);
             let sX = u.spouse ? cardPos.get(Number(u.spouse.id)) : null;
 
             if (sX !== null && sX !== undefined) {
