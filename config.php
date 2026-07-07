@@ -21,7 +21,20 @@ define('UPLOAD_URL', 'uploads');
 define('MAX_PHOTO_BYTES', 5 * 1024 * 1024); // 5 MB
 
 if (session_status() === PHP_SESSION_NONE) {
+    // Simpan sesi di folder milik aplikasi dengan masa hidup 7 hari.
+    // Folder sesi default Ubuntu dibersihkan cron tiap ~24 menit idle,
+    // membuat pengguna tiba-tiba terlempar ke halaman login.
+    $sessDir = __DIR__ . '/storage/sessions';
+    if (!is_dir($sessDir)) {
+        @mkdir($sessDir, 0770, true);
+    }
+    if (is_dir($sessDir) && is_writable($sessDir)) {
+        ini_set('session.save_path', $sessDir);
+    }
+    $sessionLifetime = 7 * 24 * 60 * 60;
+    ini_set('session.gc_maxlifetime', (string) $sessionLifetime);
     session_set_cookie_params([
+        'lifetime' => $sessionLifetime,
         'httponly' => true,
         'samesite' => 'Lax',
     ]);

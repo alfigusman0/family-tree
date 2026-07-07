@@ -1,3 +1,5 @@
 uploads/*
 !uploads/.htaccess
 config.local.php
+storage/sessions/*
+!storage/.htaccess

@@ -134,15 +134,16 @@
       placed.add(pid);
 
       const marriages = this._marriagesOf(pid);
-      // pasangan yang "menempel" pada blok ini: belum ditempatkan dan tidak
-      // punya orang tua di pohon (kalau punya, ia dirender di bawah orang tuanya
-      // dan pernikahannya digambar sebagai penghubung antar cabang).
+      // Pasangan SELALU menempel di samping partnernya selama belum digambar
+      // di tempat lain — pasangan yang punya orang tua di pohon nanti diberi
+      // garis putus-putus ke orang tuanya (pass-3). Dengan begitu suami-istri
+      // dan anak-anaknya selalu tampil utuh dalam satu kelompok.
       const rowUnits = []; // {marriage, spouse|null(remote)}
       for (const m of marriages) {
         const spouseId = m.husband_id === pid ? m.wife_id : m.husband_id;
         const spouse = this.persons.get(spouseId);
         if (!spouse) continue;
-        if (!placed.has(spouseId) && !this._hasParents(spouse)) {
+        if (!placed.has(spouseId)) {
           placed.add(spouseId);
           rowUnits.push({ marriage: m, spouse });
         } else {
@@ -156,13 +157,14 @@
         const m = marriages[i];
         const kids = this._childrenOfPair(m.husband_id, m.wife_id)
           .filter(k => !placed.has(Number(k.id)));
+        kids.forEach(k => { k._viaChild = true; }); // digambar lewat jalur anak
         const blocks = kids.map(k => this._buildBlock(k, placed));
-        // anak yang sudah ditempatkan di cabang lain → digambar lewat pass-2
         childGroups.push({ unitIndex: i, blocks });
       }
-      const soloKids = this._childrenOfSingle(pid, person.gender)
-        .filter(k => !placed.has(Number(k.id)))
-        .map(k => this._buildBlock(k, placed));
+      const soloKidsList = this._childrenOfSingle(pid, person.gender)
+        .filter(k => !placed.has(Number(k.id)));
+      soloKidsList.forEach(k => { k._viaChild = true; });
+      const soloKids = soloKidsList.map(k => this._buildBlock(k, placed));
       if (soloKids.length) childGroups.push({ unitIndex: null, blocks: soloKids });
 
       // ukuran baris kartu: [person, spouse1, spouse2, ...]
@@ -306,6 +308,7 @@
       if (this.persons.size === 0) return;
 
       const placed = new Set();
+      this.persons.forEach(p => { p._viaChild = false; });
 
       // akar: tidak punya orang tua di pohon, dan bukan "pasangan yang menempel"
       // pada orang lain — orang seperti itu akan ditarik saat pasangannya dirender.
@@ -352,16 +355,14 @@
         }));
       }
 
-      // pass-3: anak yang orang tuanya ada tetapi dirender di blok lain
-      // (misal keduanya pasangan "remote") — garis putus-putus orang tua→anak.
+      // pass-3: orang yang punya orang tua di pohon tetapi digambar di blok
+      // lain (mis. menempel di samping pasangannya) — hubungkan ke orang
+      // tuanya dengan garis putus-putus agar silsilahnya tetap terlihat.
       this.persons.forEach(p => {
         const pidNum = Number(p.id);
         const pos = this.positions.get(pidNum);
         if (!pos) return;
-        // sudah tergambar normal bila drop bus menyentuh; deteksi sulit — cukup
-        // pastikan: bila punya orang tua di pohon tapi tidak digambar sebagai anak
-        // (ditandai flag _drawnAsChild), hubungkan putus-putus.
-        if (this._hasParents(p) && !p._drawnAsChild) {
+        if (this._hasParents(p) && !p._viaChild) {
           const par = this.persons.get(Number(p.father_id)) || this.persons.get(Number(p.mother_id));
           const ppos = par ? this.positions.get(Number(par.id)) : null;
           if (ppos) {
@@ -382,17 +383,6 @@
     _drawCard(p, x, y) {
       const pid = Number(p.id);
       this.positions.set(pid, { x, y });
-      // tandai bahwa orang ini digambar sebagai anak di bawah orang tuanya
-      // (dipakai pass-3). Ia dianggap "anak tergambar" bila punya orang tua
-      // dan penempatannya terjadi lewat rekursi blok anak — pendekatan praktis:
-      // saat kartu digambar, cek apakah orang tuanya SUDAH digambar lebih dulu.
-      if (this._hasParents(p)) {
-        const f = this.positions.get(Number(p.father_id));
-        const mo = this.positions.get(Number(p.mother_id));
-        p._drawnAsChild = !!(f || mo);
-      } else {
-        p._drawnAsChild = false;
-      }
 
       const g = el('g', {
         class: 'node-card ' + (p.gender === 'L' ? 'male' : 'female') +
@@ -533,22 +523,27 @@
       const svg = this.svg;
       let dragging = false, lx = 0, ly = 0, moved = false;
 
+      // PENTING: jangan pakai setPointerCapture di sini — capture membelokkan
+      // event click ke elemen svg sehingga klik pada kartu tidak pernah sampai.
+      // Drag dilacak lewat listener di window agar tetap mulus keluar area svg.
       svg.addEventListener('pointerdown', (e) => {
         if (e.pointerType === 'touch') return; // touch ditangani terpisah
         dragging = true; moved = false;
         lx = e.clientX; ly = e.clientY;
-        svg.classList.add('dragging');
-        svg.setPointerCapture(e.pointerId);
       });
-      svg.addEventListener('pointermove', (e) => {
+      window.addEventListener('pointermove', (e) => {
         if (!dragging) return;
         const dx = e.clientX - lx, dy = e.clientY - ly;
-        if (Math.abs(dx) + Math.abs(dy) > 2) moved = true;
+        if (Math.abs(dx) + Math.abs(dy) > 2) {
+          moved = true;
+          svg.classList.add('dragging');
+        }
         this.tx += dx; this.ty += dy;
         lx = e.clientX; ly = e.clientY;
         this._applyTransform();
       });
-      svg.addEventListener('pointerup', (e) => {
+      window.addEventListener('pointerup', (e) => {
+        if (!dragging) return;
         dragging = false;
         svg.classList.remove('dragging');
         if (!moved && e.target === svg && this.opts.onDeselect) this.opts.onDeselect();
