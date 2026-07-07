@@ -38,7 +38,7 @@ if ($code !== '') {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Undangan — <?= e(APP_NAME) ?></title>
-<link rel="stylesheet" href="assets/css/app.css">
+<link rel="stylesheet" href="<?= asset('assets/css/app.css') ?>">
 </head>
 <body class="auth-body">
 <main class="auth-card">

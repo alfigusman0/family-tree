@@ -6,7 +6,7 @@ $treeId = (int) ($_GET['id'] ?? 0);
 $role = tree_role($treeId, (int) $user['id']);
 if ($role === null) {
     http_response_code(403);
-    ?><!DOCTYPE html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Akses ditolak</title><link rel="stylesheet" href="assets/css/app.css"></head>
+    ?><!DOCTYPE html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Akses ditolak</title><link rel="stylesheet" href="<?= asset('assets/css/app.css') ?>"></head>
     <body class="auth-body"><main class="auth-card"><h1 style="font-size:20px">Akses ditolak</h1>
     <p style="color:var(--ink-2)">Anda bukan anggota pohon keluarga ini. Minta kode undangan kepada pemiliknya.</p>
     <a class="btn btn-block" href="dashboard.php">Kembali ke beranda</a></main></body></html><?php
@@ -25,7 +25,7 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title><?= e($tree['name']) ?> — <?= e(APP_NAME) ?></title>
-<link rel="stylesheet" href="assets/css/app.css">
+<link rel="stylesheet" href="<?= asset('assets/css/app.css') ?>">
 </head>
 <body>
 <header class="topbar">
@@ -286,9 +286,9 @@ window.MY_USER_ID = <?= (int) $user['id'] ?>;
 window.SHARE_EDIT = <?= json_encode($tree['share_code_edit']) ?>;
 window.SHARE_VIEW = <?= json_encode($tree['share_code_view']) ?>;
 </script>
-<script src="assets/js/api.js"></script>
-<script src="assets/js/tree-renderer.js"></script>
-<script src="assets/js/tree-page.js"></script>
-<script src="assets/js/import-kk.js"></script>
+<script src="<?= asset('assets/js/api.js') ?>"></script>
+<script src="<?= asset('assets/js/tree-renderer.js') ?>"></script>
+<script src="<?= asset('assets/js/tree-page.js') ?>"></script>
+<script src="<?= asset('assets/js/import-kk.js') ?>"></script>
 </body>
 </html>

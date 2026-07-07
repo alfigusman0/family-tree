@@ -172,3 +172,11 @@ function e(?string $s): string
 {
     return htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
 }
+
+/** URL asset dengan versi (cache busting untuk CDN/Cloudflare). */
+function asset(string $path): string
+{
+    $file = __DIR__ . '/' . $path;
+    $v = is_file($file) ? (string) filemtime($file) : '1';
+    return e($path . '?v=' . $v);
+}

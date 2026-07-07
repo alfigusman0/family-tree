@@ -22,7 +22,7 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pohon Keluarga Saya — <?= e(APP_NAME) ?></title>
-<link rel="stylesheet" href="assets/css/app.css">
+<link rel="stylesheet" href="<?= asset('assets/css/app.css') ?>">
 </head>
 <body>
 <header class="topbar">
@@ -110,7 +110,7 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
 <script>
 window.CSRF = <?= json_encode(csrf_token()) ?>;
 </script>
-<script src="assets/js/api.js"></script>
+<script src="<?= asset('assets/js/api.js') ?>"></script>
 <script>
 (function () {
   const openModal  = id => document.getElementById(id).classList.add('open');

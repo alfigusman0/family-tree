@@ -45,7 +45,7 @@ $initial = mb_strtoupper(mb_substr($user['name'], 0, 1));
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Akun Saya — <?= e(APP_NAME) ?></title>
-<link rel="stylesheet" href="assets/css/app.css">
+<link rel="stylesheet" href="<?= asset('assets/css/app.css') ?>">
 </head>
 <body>
 <header class="topbar">
